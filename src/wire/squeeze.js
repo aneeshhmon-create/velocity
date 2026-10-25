@@ -64,9 +64,22 @@ const negotiate = (res, mime, size, config) => {
   if (size < config.threshold) return { codec: null, eligible: true };
 
   return {
-    codec: chooseCodec(String(res.req?.headers["accept-codec"] || "")),
+    codec: chooseCodec(String(res.req?.headers["accept-encoding"] || "")),
     eligible: true
   };
+};
+
+// Buffered bodies up to this size are compressed in one call; a stream pipeline costs more than the work itself.
+const ONE_SHOT_LIMIT = 64 * 1024;
+
+const compressNow = (codec, body, config) => {
+  if (codec === "br") {
+    return zlib.brotliCompressSync(body, {
+      ...config.brotli,
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4, ...config.brotli.params }
+    });
+  }
+  return codec === "gzip" ? zlib.gzipSync(body, config.gzip) : zlib.deflateSync(body, config.deflate);
 };
 
 const isBuffered = (body) => typeof body === "string" || Buffer.isBuffer(body);
@@ -104,6 +117,12 @@ export const sendSqueezed = async (res, mime, body, config, size) => {
 
   res.setHeader("Content-Encoding", codec);
   mergeVary(res, "Accept-Encoding");
+  if (isBuffered(body) && knownSize <= ONE_SHOT_LIMIT) {
+    const packed = compressNow(codec, body, config);
+    res.setHeader("Content-Length", String(packed.length));
+    res.end(packed);
+    return;
+  }
   await pipeline(asReadable(body), codecStream(codec, config), res);
 };
 

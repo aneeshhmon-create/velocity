@@ -67,8 +67,9 @@ export const createTrie = () => {
       code: faultCodes.routeClash
     });
 
+  // Keyed by upper-case method, the form node hands over in req.method, so lookups skip the case fold.
   const insert = (method, path, links) => {
-    const key = method.toLowerCase();
+    const key = method.toUpperCase();
     if (!forest.has(key)) forest.set(key, makeNode());
 
     const segments = splitPath(path);
@@ -111,7 +112,7 @@ export const createTrie = () => {
   };
 
   const lookup = (method, path) => {
-    const key = method.toLowerCase();
+    const key = method;
     const direct = exact.get(key)?.get(path);
     if (direct) return direct;
     const tree = forest.get(key);

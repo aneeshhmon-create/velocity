@@ -7,13 +7,16 @@ import { mediaTypes } from "../shared/mediatypes.js";
 import { createTrie } from "../paths/trie.js";
 import { startJournal, standbyJournal, wantsTrafficLines } from "../journal/journal.js";
 import { createChain } from "./chain.js";
-import { shapeInbound } from "../wire/inbound.js";
-import { shapeOutbound } from "../wire/outbound.js";
+import { Inbound } from "../wire/inbound.js";
+import { Outbound, shapeOutbound } from "../wire/outbound.js";
 
 const METHODS = ["get", "post", "put", "patch", "delete", "head", "options"];
 
 export const createVelocity = (options = {}) => {
-  const server = options.https ? https.createServer(options.https) : http.createServer();
+  const shapes = { IncomingMessage: Inbound, ServerResponse: Outbound };
+  const server = options.https
+    ? https.createServer({ ...options.https, ...shapes })
+    : http.createServer(shapes);
   const trie = createTrie();
   const globals = [];
   const compression = options.compression ? resolveSqueeze(options.compression) : undefined;
@@ -49,8 +52,9 @@ export const createVelocity = (options = {}) => {
 
   const chain = createChain(handleFault);
 
-  const route = async (req, res) => {
-    const path = req.url.split("?")[0];
+  const route = (req, res) => {
+    const at = req.url.indexOf("?");
+    const path = at === -1 ? req.url : req.url.slice(0, at);
     const match = trie.lookup(req.method || "", path);
 
     if (match) {
@@ -60,7 +64,11 @@ export const createVelocity = (options = {}) => {
 
     if (missingHandler) {
       try {
-        return await missingHandler(req, res);
+        const out = missingHandler(req, res);
+        if (out && typeof out.then === "function") {
+          return out.then(undefined, (error) => handleFault(error, req, res));
+        }
+        return out;
       } catch (error) {
         return handleFault(error, req, res);
       }
@@ -69,14 +77,14 @@ export const createVelocity = (options = {}) => {
     return res.setStatus(404).sendJson({ error: `Cannot ${req.method} ${path}` });
   };
 
-  server.on("request", async (req, res) => {
+  server.on("request", (req, res) => {
     const tracking = wantsTrafficLines();
     const meta = { compression, bytes: 0 };
     if (tracking) Object.assign(meta, { started: performance.now(), url: req.url || "", journal });
 
-    shapeInbound(req);
     shapeOutbound(res, meta, tracking);
-    await chain.run(globals, req, res, () => route(req, res));
+    if (globals.length === 0) return route(req, res);
+    return chain.run(globals, req, res, () => route(req, res));
   });
 
   const buildLinks = (args) => {

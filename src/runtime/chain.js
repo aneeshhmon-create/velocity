@@ -1,19 +1,24 @@
 export const createChain = (onFault) => {
-  const run = async (links, req, res, done) => {
+  // Stays synchronous until a link returns a promise, so sync handlers don't allocate one per step.
+  const run = (links, req, res, done) => {
     let pos = 0;
 
-    const proceed = async (error) => {
+    const proceed = (error) => {
       if (error) return onFault(error, req, res);
       const link = links[pos++];
       if (!link) return done?.();
       try {
-        await link(req, res, proceed);
+        const out = link(req, res, proceed);
+        if (out && typeof out.then === "function") {
+          return out.then(undefined, (raised) => onFault(raised, req, res));
+        }
+        return out;
       } catch (raised) {
-        await onFault(raised, req, res);
+        return onFault(raised, req, res);
       }
     };
 
-    await proceed();
+    return proceed();
   };
 
   return { run };

@@ -1,3 +1,4 @@
+import http from "node:http";
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
@@ -105,8 +106,16 @@ const meterBytes = (res) => {
   };
 };
 
+export class Outbound extends http.ServerResponse {
+  constructor(req, options) {
+    super(req, options);
+    this.meta = undefined;
+  }
+}
+
+Object.assign(Outbound.prototype, outboundApi);
+
 export const shapeOutbound = (res, meta, metering) => {
-  Object.assign(res, outboundApi);
   res.meta = meta;
   if (metering) meterBytes(res);
   return res;
